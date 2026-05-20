@@ -1,4 +1,5 @@
 import hashlib
+import mmap
 import os
 import shutil
 import subprocess
@@ -9,8 +10,11 @@ import time
 from .disk_detector import unmount_drive, get_partition_path
 from .i18n import _
 
-BLOCK_SIZE  = 4 * 1024 * 1024        # 4 MB
-FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
+BLOCK_SIZE          = 4 * 1024 * 1024          # 4 MB — Windows ağaç kopyalama
+LINUX_BLOCK_SIZE    = 16 * 1024 * 1024         # 16 MB — Linux dd-tarzı yazma
+DIRECT_ALIGN        = 4096                     # O_DIRECT için tail padding hizası
+SYNC_INTERVAL_BYTES = 256 * 1024 * 1024        # 256 MB'de bir fdatasync
+FAT32_LIMIT         = 4 * 1024 * 1024 * 1024   # 4 GB
 
 
 def _find_wimlib():
@@ -122,22 +126,62 @@ class USBWriter:
         iso_size = os.path.getsize(self.iso_path)
         self.on_status(_('st.iso_write'))
 
-        with open(self.iso_path, 'rb') as src, \
-             open(self.drive_path, 'wb') as dst:
-            written = 0
-            while True:
-                self._check()
-                block = src.read(BLOCK_SIZE)
-                if not block:
-                    break
-                dst.write(block)
-                written += len(block)
-                self.on_progress(written / iso_size)
-                self.on_file_status(_(
-                    'st.writing_progress',
-                    done=written / (1024**2),
-                    total=iso_size / (1024**2),
-                ))
+        # O_DIRECT: page cache'i bypass et — ilerleme çubuğu gerçek USB
+        # yazım hızını gösterir, sondaki uzun "sync" beklemesi olmaz.
+        # Bazı egzotik aygıtlarda O_DIRECT reddedilirse buffered'a düş.
+        flags = os.O_WRONLY | os.O_CLOEXEC
+        try:
+            fd_dst = os.open(self.drive_path, flags | os.O_DIRECT)
+            use_direct = True
+        except OSError:
+            fd_dst = os.open(self.drive_path, flags)
+            use_direct = False
+
+        # mmap anonim sayfası page-aligned — O_DIRECT için aligned tampon.
+        buf = mmap.mmap(-1, LINUX_BLOCK_SIZE)
+        try:
+            with open(self.iso_path, 'rb') as src:
+                written = 0
+                since_sync = 0
+                mv = memoryview(buf)
+                while True:
+                    self._check()
+                    n = src.readinto(mv)
+                    if not n:
+                        break
+
+                    if use_direct:
+                        # O_DIRECT yazım boyu blok hizasına yuvarlanmalı;
+                        # tail'i sıfırla. En fazla 4095 byte zero padding.
+                        pad = (-n) % DIRECT_ALIGN
+                        if pad:
+                            buf[n:n + pad] = b'\x00' * pad
+                        write_size = n + pad
+                    else:
+                        write_size = n
+
+                    view = mv[:write_size]
+                    while view:
+                        w = os.write(fd_dst, view)
+                        view = view[w:]
+
+                    written += n
+                    since_sync += n
+                    self.on_progress(min(written, iso_size) / iso_size)
+                    self.on_file_status(_(
+                        'st.writing_progress',
+                        done=written / (1024**2),
+                        total=iso_size / (1024**2),
+                    ))
+
+                    if since_sync >= SYNC_INTERVAL_BYTES:
+                        os.fdatasync(fd_dst)
+                        since_sync = 0
+
+            os.fdatasync(fd_dst)
+        finally:
+            buf.close()
+            os.close(fd_dst)
 
         self.on_status(_('st.sync'))
         subprocess.run(['sync'], check=True)
