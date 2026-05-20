@@ -1,0 +1,4 @@
+#!/bin/sh
+# USBnux - pkexec araciligiyla root ile baslatir.
+# Polkit eylem dosyasi GUI ortam degiskenlerini korur.
+exec pkexec /usr/lib/usbnux/usbnux-pkexec "$@"

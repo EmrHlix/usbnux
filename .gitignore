@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artefakti
+build/
+dist/
+
+# Editor / IDE ayarlari
+.vscode/
+.idea/
+
+# Editor swap & backup
+*.swp
+*.swo
+*~
+*.bak
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Sirlar (defensive)
+.env
+.env.local
+.env.*.local
+
+# Loglar
+*.log

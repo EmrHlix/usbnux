@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=USBnux
+GenericName=USB ISO Writer
+GenericName[tr]=USB ISO Yazıcı
+Comment=Write and format USB drives, dump USB to ISO
+Comment[tr]=USB sürücüye yazma, biçimlendirme ve USB→ISO çekme
+Exec=usbnux
+Icon=io.github.usbnux
+StartupWMClass=io.github.usbnux
+Terminal=false
+Categories=System;
+Keywords=USB;ISO;Boot;Format;Writer;Image;
+StartupNotify=true

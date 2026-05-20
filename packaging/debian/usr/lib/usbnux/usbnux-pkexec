@@ -1,0 +1,26 @@
+#!/bin/sh
+# pkexec tarafindan root olarak calistirilir.
+# .policy dosyasi allow_gui ile DISPLAY/XAUTHORITY/WAYLAND_DISPLAY iletir.
+export GSETTINGS_BACKEND=memory
+
+# Cagiran kullanicinin HOME'unu kullan ki file chooser sidebar'inda
+# kullanicinin Masaustu / Indirilenler / Belgeler kisayollari gorunsun.
+if [ -n "$PKEXEC_UID" ]; then
+    REAL_HOME=$(getent passwd "$PKEXEC_UID" | cut -d: -f6)
+    if [ -n "$REAL_HOME" ] && [ -d "$REAL_HOME" ]; then
+        export HOME="$REAL_HOME"
+    fi
+fi
+
+# Root, kullanicinin ~/.cache ve son-dosyalar listesini kirletmesin diye
+# gecici dizinlere yonlendir.
+USBNUX_TMP=$(mktemp -d /tmp/usbnux.XXXXXX)
+export XDG_CACHE_HOME="$USBNUX_TMP/cache"
+export XDG_DATA_HOME="$USBNUX_TMP/data"
+export XDG_STATE_HOME="$USBNUX_TMP/state"
+trap 'rm -rf "$USBNUX_TMP"' EXIT INT TERM HUP
+
+python3 /usr/lib/usbnux/main.py "$@"
+RC=$?
+rm -rf "$USBNUX_TMP"
+exit $RC
