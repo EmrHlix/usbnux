@@ -140,45 +140,51 @@ class USBWriter:
         # mmap anonim sayfası page-aligned — O_DIRECT için aligned tampon.
         buf = mmap.mmap(-1, LINUX_BLOCK_SIZE)
         try:
-            with open(self.iso_path, 'rb') as src:
-                written = 0
-                since_sync = 0
-                mv = memoryview(buf)
-                while True:
-                    self._check()
-                    n = src.readinto(mv)
-                    if not n:
-                        break
+            # memoryview release edilmeden buf.close() çağrılırsa
+            # BufferError: "cannot close exported pointers exist" patlar.
+            mv = memoryview(buf)
+            try:
+                with open(self.iso_path, 'rb') as src:
+                    written = 0
+                    since_sync = 0
+                    while True:
+                        self._check()
+                        n = src.readinto(mv)
+                        if not n:
+                            break
 
-                    if use_direct:
-                        # O_DIRECT yazım boyu blok hizasına yuvarlanmalı;
-                        # tail'i sıfırla. En fazla 4095 byte zero padding.
-                        pad = (-n) % DIRECT_ALIGN
-                        if pad:
-                            buf[n:n + pad] = b'\x00' * pad
-                        write_size = n + pad
-                    else:
-                        write_size = n
+                        if use_direct:
+                            # O_DIRECT yazım boyu blok hizasına yuvarlanmalı;
+                            # tail'i sıfırla. En fazla 4095 byte zero padding.
+                            pad = (-n) % DIRECT_ALIGN
+                            if pad:
+                                mv[n:n + pad] = b'\x00' * pad
+                            write_size = n + pad
+                        else:
+                            write_size = n
 
-                    view = mv[:write_size]
-                    while view:
-                        w = os.write(fd_dst, view)
-                        view = view[w:]
+                        # Kısa yazımı offset üzerinden takip et; slice geçici
+                        # memoryview üretir, ifade sonunda refcount=0.
+                        offset = 0
+                        while offset < write_size:
+                            offset += os.write(fd_dst, mv[offset:write_size])
 
-                    written += n
-                    since_sync += n
-                    self.on_progress(min(written, iso_size) / iso_size)
-                    self.on_file_status(_(
-                        'st.writing_progress',
-                        done=written / (1024**2),
-                        total=iso_size / (1024**2),
-                    ))
+                        written += n
+                        since_sync += n
+                        self.on_progress(min(written, iso_size) / iso_size)
+                        self.on_file_status(_(
+                            'st.writing_progress',
+                            done=written / (1024**2),
+                            total=iso_size / (1024**2),
+                        ))
 
-                    if since_sync >= SYNC_INTERVAL_BYTES:
-                        os.fdatasync(fd_dst)
-                        since_sync = 0
+                        if since_sync >= SYNC_INTERVAL_BYTES:
+                            os.fdatasync(fd_dst)
+                            since_sync = 0
 
-            os.fdatasync(fd_dst)
+                os.fdatasync(fd_dst)
+            finally:
+                mv.release()
         finally:
             buf.close()
             os.close(fd_dst)
